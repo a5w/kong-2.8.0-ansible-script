@@ -1,0 +1,243 @@
+---
+- name: Install and configure Kong 2.8.0
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: safe
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - libpcre3-dev
+          - libssl-dev
+          - perl
+          - make
+          - curl
+          - zlib1g-dev
+          - lua5.1
+          - libreadline-dev
+          - liblua5.1-0-dev
+          - unzip
+          - apt-transport-https
+          - ca-certificates
+          - libyaml-dev
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Install Docker
+      block:
+
+        - name: Download Docker GPG key
+          ansible.builtin.get_url:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            dest: /tmp/docker.gpg
+
+        - name: Add Docker GPG key
+          ansible.builtin.apt_key:
+            file: /tmp/docker.gpg
+            state: present
+
+        - name: Add Docker repository
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+            state: present
+            filename: docker
+
+        - name: Update apt cache
+          ansible.builtin.apt:
+            update_cache: yes
+            cache_valid_time: 3600
+
+        - name: Wait 30 seconds
+          pause:
+            seconds: 30
+
+        - name: Install Docker
+          apt:
+            name: docker-ce
+            state: present
+
+        - name: Ensure Docker is running
+          systemd:
+            name: docker
+            state: started
+            enabled: yes
+            
+    - name: Download and install Luarocks
+      block:
+        - name: Download Luarocks
+          get_url:
+            url: https://luarocks.org/releases/luarocks-3.8.0.tar.gz
+            dest: /tmp/luarocks-3.8.0.tar.gz
+
+        - name: Extract Luarocks
+          unarchive:
+            src: /tmp/luarocks-3.8.0.tar.gz
+            dest: /tmp
+            remote_src: yes
+            creates: /tmp/luarocks-3.8.0
+
+        - name: Install Luarocks
+          command: "{{ item }}"
+          args:
+            chdir: /tmp/luarocks-3.8.0
+          with_items:
+            - ./configure
+            - make build
+            - make install
+
+    - name: Download and compile OpenResty with lua-kong-nginx-module
+      block:
+        - name: Download OpenResty
+          get_url:
+            url: https://openresty.org/download/openresty-1.19.9.1.tar.gz
+            dest: /tmp/openresty-1.19.9.1.tar.gz
+
+        - name: Extract OpenResty
+          unarchive:
+            src: /tmp/openresty-1.19.9.1.tar.gz
+            dest: /tmp
+            creates: /tmp/openresty-1.19.9.1
+            remote_src: yes
+
+        - name: Clone lua-kong-nginx-module
+          git:
+            repo: https://github.com/Kong/lua-kong-nginx-module.git
+            dest: /tmp/openresty-1.19.9.1/lua-kong-nginx-module
+
+        - name: Configure and compile OpenResty
+          command: "{{ item }}"
+          args:
+            chdir: /tmp/openresty-1.19.9.1
+          with_items:
+            - "./configure --prefix=/usr/local/openresty --with-http_ssl_module --with-http_realip_module --with-http_stub_status_module --with-http_v2_module --with-stream_ssl_preread_module --with-pcre-jit --with-luajit-xcflags='-DLUAJIT_NUMMODE=2 -DLUAJIT_ENABLE_LUA52COMPAT' --with-cc-opt='-I/tmp/openresty-1.19.9.1/lua-kong-nginx-module' --with-ld-opt='-Wl,-rpath,/usr/local/openresty/luajit/lib' --add-module=/tmp/openresty-1.19.9.1/lua-kong-nginx-module"
+            - make
+            - make install
+
+    - name: Install Kong 2.8.0
+      block:
+        - name: Create /etc/sysconfig directory
+          file:
+            path: /etc/sysconfig
+            state: directory
+
+        - name: Create /etc/sysconfig/kong file
+          copy:
+            content: "PATH=/usr/local/openresty/bin:{{ ansible_env.PATH }}"
+            dest: /etc/sysconfig/kong
+
+        - name: Clone Kong repository
+          git:
+            repo: https://github.com/Kong/kong.git
+            dest: /opt/kong
+            version: 2.8.0
+
+        - name: luarock make
+          ansible.builtin.command:
+            cmd: luarocks make
+            chdir: /opt/kong
+
+        - name: Install luaossl package
+          shell: luarocks install luaossl
+
+        - name: Create /etc/kong directory
+          file:
+            path: /etc/kong
+            state: directory
+
+        - name: Copy kong.conf.default to /etc/kong/kong.conf
+          copy:
+            src: /opt/kong/kong.conf.default
+            dest: /etc/kong/kong.conf
+            remote_src: yes
+
+
+        - name: Move lualib/resty to /opt/kong
+          command: mv /tmp/openresty-1.19.9.1/lua-kong-nginx-module/lualib/resty /opt/kong/
+
+        - name: Update /etc/kong/kong.conf
+          blockinfile:
+            path: /etc/kong/kong.conf
+            block: |
+              database = postgres
+              pg_host = 127.0.0.1
+              pg_port = 5432
+              pg_user = kong
+              pg_password = kong
+              pg_database = kong
+
+        - name: Run PostgreSQL container
+          docker_container:
+            name: kong-psql
+            image: postgres
+            state: started
+            pull: true
+            restart_policy: always
+            env:
+              POSTGRES_PASSWORD: kong
+              POSTGRES_USER: kong
+              POSTGRES_DB: kong
+            ports:
+              - "5432:5432"
+
+        - name: Increase ulimit
+          lineinfile:
+            dest: /etc/security/limits.conf
+            regexp: '^\\*\\s+hard\\s+nofile'
+            line: '* soft nofile 4096'
+
+
+        - name: Run Kong migrations bootstrap
+          ansible.builtin.shell:
+            cmd: ulimit -n 4096 && bin/kong migrations bootstrap
+          args:
+            chdir: /opt/kong
+          environment:
+            PATH: "{{ ansible_env.PATH }}:/usr/local/openresty/bin/"
+          register: result
+          failed_when: result.rc not in [0, 137]
+
+        - name: Create and enable Kong systemd service
+          block:
+            - name: Create Kong systemd service
+              copy:
+                content: |
+                  [Unit]
+                  Description=Kong API Gateway
+                  After=network.target
+
+                  [Service]
+                  Type=forking
+                  User=root
+                  Group=root
+                  WorkingDirectory=/opt/kong
+                  EnvironmentFile=-/etc/sysconfig/kong
+                  ExecStart=/opt/kong/bin/kong start --prefix /usr/local/kong
+                  ExecReload=/opt/kong/bin/kong reload --prefix /usr/local/kong
+                  ExecStop=/opt/kong/bin/kong quit --prefix /usr/local/kong
+                  Restart=on-failure
+                  RestartSec=5
+                  StartLimitInterval=60s
+                  StartLimitBurst=5
+
+                  [Install]
+                  WantedBy=multi-user.target
+                dest: /etc/systemd/system/kong.service
+
+            - name: Reload systemd configuration
+              systemd:
+                daemon_reload: yes
+
+            - name: Enable and start Kong service
+              systemd:
+                name: kong
+                state: started
+                enabled: yes
