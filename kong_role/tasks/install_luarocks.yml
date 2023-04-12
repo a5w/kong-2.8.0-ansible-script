@@ -1,0 +1,25 @@
+---
+- name: Download and install Luarocks
+  block:
+    - name: Download Luarocks
+      get_url:
+        url: https://luarocks.org/releases/luarocks-3.8.0.tar.gz
+        dest: /tmp/luarocks-3.8.0.tar.gz
+
+    - name: Extract Luarocks
+      unarchive:
+        src: /tmp/luarocks-3.8.0.tar.gz
+        dest: /tmp
+        remote_src: yes
+        creates: /tmp/luarocks-3.8.0
+
+    - name: Install Luarocks
+      command: "{{ item }}"
+      args:
+        chdir: /tmp/luarocks-3.8.0
+      with_items:
+        - ./configure
+        - make build
+        - make install
+  tags:
+    - install_luarocks

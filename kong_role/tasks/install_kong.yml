@@ -1,0 +1,74 @@
+---
+- name: Install Kong 2.8.0
+  block:
+    - name: Create /etc/sysconfig directory
+      file:
+        path: /etc/sysconfig
+        state: directory
+
+    - name: Create /etc/sysconfig/kong file
+      copy:
+        content: "PATH=/usr/local/openresty/bin:{{ ansible_env.PATH }}"
+        dest: /etc/sysconfig/kong
+
+    - name: Clone Kong repository
+      git:
+        repo: https://github.com/Kong/kong.git
+        dest: /opt/kong
+        version: 2.8.0
+
+    - name: luarock make
+      ansible.builtin.command:
+        cmd: luarocks make
+        chdir: /opt/kong
+
+    - name: Install luaossl package
+      shell: luarocks install luaossl
+
+    - name: Create /etc/kong directory
+      file:
+        path: /etc/kong
+        state: directory
+
+    - name: Copy kong.conf.default to /etc/kong/kong.conf
+      copy:
+        src: /opt/kong/kong.conf.default
+        dest: /etc/kong/kong.conf
+        remote_src: yes
+
+
+    - name: Move lualib/resty to /opt/kong
+      command: mv /tmp/openresty-1.19.9.1/lua-kong-nginx-module/lualib/resty /opt/kong/
+
+    - name: Update /etc/kong/kong.conf
+      blockinfile:
+        path: /etc/kong/kong.conf
+        block: |
+          database = postgres
+          pg_host = 127.0.0.1
+          pg_port = 5432
+          pg_user = kong
+          pg_password = kong
+          pg_database = kong
+
+    - name: Run PostgreSQL container
+      docker_container:
+        name: kong-psql
+        image: postgres
+        state: started
+        pull: true
+        restart_policy: always
+        env:
+          POSTGRES_PASSWORD: kong
+          POSTGRES_USER: kong
+          POSTGRES_DB: kong
+        ports:
+          - "5432:5432"
+
+    - name: Increase ulimit
+      lineinfile:
+        dest: /etc/security/limits.conf
+        regexp: '^\\*\\s+hard\\s+nofile'
+        line: '* soft nofile 4096'
+  tags:
+    - install_kong

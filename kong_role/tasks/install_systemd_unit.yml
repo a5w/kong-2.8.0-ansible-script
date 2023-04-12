@@ -1,0 +1,38 @@
+---
+- name: Create and enable Kong systemd service
+  block:
+    - name: Create Kong systemd service
+      copy:
+        content: |
+          [Unit]
+          Description=Kong API Gateway
+          After=network.target
+
+          [Service]
+          Type=forking
+          User=root
+          Group=root
+          WorkingDirectory=/opt/kong
+          EnvironmentFile=-/etc/sysconfig/kong
+          ExecStart=/opt/kong/bin/kong start --prefix /usr/local/kong
+          ExecReload=/opt/kong/bin/kong reload --prefix /usr/local/kong
+          ExecStop=/opt/kong/bin/kong quit --prefix /usr/local/kong
+          Restart=on-failure
+          RestartSec=5
+          StartLimitInterval=60s
+          StartLimitBurst=5
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/kong.service
+
+    - name: Reload systemd configuration
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Kong service
+      systemd:
+        name: kong
+        state: started
+  tags:
+    - install_systemd_unit

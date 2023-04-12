@@ -1,0 +1,29 @@
+- name: Download and compile OpenResty with lua-kong-nginx-module
+  block:
+    - name: Download OpenResty
+      get_url:
+        url: https://openresty.org/download/openresty-1.19.9.1.tar.gz
+        dest: /tmp/openresty-1.19.9.1.tar.gz
+
+    - name: Extract OpenResty
+      unarchive:
+        src: /tmp/openresty-1.19.9.1.tar.gz
+        dest: /tmp
+        creates: /tmp/openresty-1.19.9.1
+        remote_src: yes
+
+    - name: Clone lua-kong-nginx-module
+      git:
+        repo: https://github.com/Kong/lua-kong-nginx-module.git
+        dest: /tmp/openresty-1.19.9.1/lua-kong-nginx-module
+
+    - name: Configure and compile OpenResty
+      command: "{{ item }}"
+      args:
+        chdir: /tmp/openresty-1.19.9.1
+      with_items:
+        - "./configure --prefix=/usr/local/openresty --with-http_ssl_module --with-http_realip_module --with-http_stub_status_module --with-http_v2_module --with-stream_ssl_preread_module --with-pcre-jit --with-luajit-xcflags='-DLUAJIT_NUMMODE=2 -DLUAJIT_ENABLE_LUA52COMPAT' --with-cc-opt='-I/tmp/openresty-1.19.9.1/lua-kong-nginx-module' --with-ld-opt='-Wl,-rpath,/usr/local/openresty/luajit/lib' --add-module=/tmp/openresty-1.19.9.1/lua-kong-nginx-module"
+        - make
+        - make install
+  tags:
+    - install_openresty

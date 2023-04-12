@@ -1,0 +1,12 @@
+---
+- name: Create and enable Kong systemd service
+  block:
+  - name: Update apt cache
+    ansible.builtin.apt:
+      update_cache: yes
+
+  - name: Upgrade all packages
+    ansible.builtin.apt:
+      upgrade: safe
+  tags:
+    - update_apt_cache

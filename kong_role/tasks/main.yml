@@ -1,0 +1,9 @@
+---
+- import_tasks: update_apt_cache.yml
+- import_tasks: install_dependencies.yml
+- import_tasks: install_docker.yml
+- import_tasks: install_luarocks.yml
+- import_tasks: install_openresty.yml
+- import_tasks: install_kong.yml
+- import_tasks: bootstrap_kong.yml
+- import_tasks: install_systemd_unit.yml

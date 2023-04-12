@@ -1,0 +1,12 @@
+---
+- name: Run Kong migrations bootstrap
+  ansible.builtin.shell:
+    cmd: ulimit -n 4096 && bin/kong migrations bootstrap
+  args:
+    chdir: /opt/kong
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/openresty/bin/"
+  register: result
+  failed_when: result.rc not in [0, 137]
+  tags:
+    - bootstrap_kong
